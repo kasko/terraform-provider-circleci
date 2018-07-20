@@ -35,7 +35,7 @@ jobs:
       - checkout
       - run:
           name: Run goreleaser
-          command: curl -s https://git.io/goreleaser | bash
+          command: curl -sL https://git.io/goreleaser | bash
 
 workflows:
   version: 2
