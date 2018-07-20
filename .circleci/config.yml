@@ -57,8 +57,8 @@ jobs:
           name: Tag & deploy docker image
           command: |
             docker login -u $DOCKER_USER -p $DOCKER_PASS
-            docker push kasko/terraform-provider-circleci
-            docker tag kasko/terraform-provider-circleci:${CIRCLE_TAG}
+            docker tag kasko/terraform-provider-circleci:latest kasko/terraform-provider-circleci:${CIRCLE_TAG}
+            docker push kasko/terraform-provider-circleci:latest
             docker push kasko/terraform-provider-circleci:${CIRCLE_TAG}
 
 
