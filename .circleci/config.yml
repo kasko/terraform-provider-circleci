@@ -46,18 +46,20 @@ jobs:
     docker:
       - image: docker:stable-git
     steps:
-    - attach_workspace:
-        at: .
-    - run:
-        name: Build docker image
-        command: docker build -t kasko/terraform-provider-circleci .
-    - run:
-        name: Tag & deploy docker image
-        command: |
-          docker login -u $DOCKER_USER -p $DOCKER_PASS
-          docker push kasko/terraform-provider-circleci
-          docker tag kasko/terraform-provider-circleci:${CIRCLE_TAG}
-          docker push kasko/terraform-provider-circleci:${CIRCLE_TAG}
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - attach_workspace:
+          at: .
+      - run:
+          name: Build docker image
+          command: docker build -t kasko/terraform-provider-circleci .
+      - run:
+          name: Tag & deploy docker image
+          command: |
+            docker login -u $DOCKER_USER -p $DOCKER_PASS
+            docker push kasko/terraform-provider-circleci
+            docker tag kasko/terraform-provider-circleci:${CIRCLE_TAG}
+            docker push kasko/terraform-provider-circleci:${CIRCLE_TAG}
 
 
 
