@@ -36,28 +36,6 @@ jobs:
       - run:
           name: Run goreleaser
           command: curl -sL https://git.io/goreleaser | bash
-      - persist_to_workspace:
-          root: .
-          paths:
-            - dist/
-
-  dockerize:
-    docker:
-      - image: docker:stable-git
-    steps:
-    - attach_workspace:
-        at: .
-    - run:
-        name: Build docker image
-        command: docker build -t kasko/terraform-provider-circleci .
-    - run:
-        name: Tag & deploy docker image
-        command: |
-          docker push kasko/terraform-provider-circleci
-          docker tag kasko/terraform-provider-circleci:${CIRCLE_TAG}
-          docker push kasko/terraform-provider-circleci:${CIRCLE_TAG}
-
-
 
 workflows:
   version: 2
@@ -80,14 +58,6 @@ workflows:
       - release:
           requires:
             - build
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /^[0-9]+(\.[0-9]+)*/
-      - dockerize:
-          requires:
-            - release
           filters:
             branches:
               ignore: /.*/
