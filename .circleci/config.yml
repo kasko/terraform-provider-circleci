@@ -15,6 +15,9 @@ jobs:
           name: Install govendor
           command: go get github.com/kardianos/govendor
       - run:
+          name: Sync
+          command: govendor sync
+      - run:
           name: Run tests
           command: make test
       - run:
