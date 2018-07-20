@@ -1,0 +1,8 @@
+build:
+  binary: terraform-provider-circleci
+  goos:
+    - darwin
+    - linux
+    - windows
+  goarch:
+    - amd64
