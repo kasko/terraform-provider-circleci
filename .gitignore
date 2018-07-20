@@ -1,0 +1,4 @@
+terraform-provider-circleci
+*.tfstate
+*.tfstate.backup
+.terraform/
