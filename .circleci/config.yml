@@ -21,9 +21,6 @@ jobs:
           name: Run tests
           command: make test
       - run:
-          name: Run acceptance tests
-          command: make testacc
-      - run:
           name: Check vendor status
           command: make vendor-status
       - run:
@@ -63,8 +60,6 @@ jobs:
             docker tag kasko/terraform-provider-circleci:latest kasko/terraform-provider-circleci:${CIRCLE_TAG}
             docker push kasko/terraform-provider-circleci:latest
             docker push kasko/terraform-provider-circleci:${CIRCLE_TAG}
-
-
 
 workflows:
   version: 2
