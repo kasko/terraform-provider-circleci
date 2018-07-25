@@ -82,6 +82,14 @@ Type `keypair` block supports:
 
 #### Import
 
+Projects can be imported using the vcs type, organization name and repository name , e.g.
+
+Projects can be imported using the vcs type, combined with the organization name and repository name, separated by a : character. For example:
+
+```
+terraform import circleci_project.project github:organization_name:repo_name
+```
+
 ## Building The Provider
 
 Clone repository to: `$GOPATH/src/github.com/kasko/terraform-provider-circleci`
@@ -134,4 +142,3 @@ For license please check the [LICENSE](LICENSE) file.
 ## TODO
 
 - Cover resources with tests.
-- Implement import feature.
