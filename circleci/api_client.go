@@ -3,6 +3,7 @@ package circleci
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -134,7 +135,7 @@ func (c *ApiClient) GetProject(vcstype, account, reponame string) (*Project, err
 		}
 	}
 
-	return nil, nil
+	return nil, errors.New(fmt.Sprintf("Unable to find project %s/%s/%s", vcstype, account, reponame))
 }
 
 // DisableProject disables a project
