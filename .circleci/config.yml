@@ -19,7 +19,7 @@ jobs:
           command: govendor sync
       - run:
           name: Run tests
-          command: make test
+          command: make testacc
       - run:
           name: Check vendor status
           command: make vendor-status
