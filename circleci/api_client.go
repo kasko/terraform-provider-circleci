@@ -143,27 +143,6 @@ func (c *ApiClient) DisableProject(vcstype, account, reponame string) error {
 	return c.request("DELETE", fmt.Sprintf("project/%s/%s/%s/enable", vcstype, account, reponame), nil, nil, nil)
 }
 
-// SetAwsKeys updates projects AWS keys
-func (c *ApiClient) SetAwsKeys(vcstype, account, reponame, keyId, secret string) error {
-	return c.request("PUT", fmt.Sprintf("project/%s/%s/%s/settings", vcstype, account, reponame), nil, nil, &Project{
-		AWSConfig: AWSConfig{
-			AWSKeypair: &AWSKeypair{
-				AccessKey: keyId,
-				SecretKey: secret,
-			},
-		},
-	})
-}
-
-// RemoveAwsKeys updates projects AWS keys
-func (c *ApiClient) RemoveAwsKeys(vcstype, account, reponame string) error {
-	return c.request("PUT", fmt.Sprintf("project/%s/%s/%s/settings", vcstype, account, reponame), nil, nil, &Project{
-		AWSConfig: AWSConfig{
-			AWSKeypair: nil,
-		},
-	})
-}
-
 // ListEnvVars list environment variable to the specified project
 // Returns the env vars (the value will be masked)
 func (c *ApiClient) ListEnvVars(vcstype, account, reponame string) ([]EnvVar, error) {
@@ -277,21 +256,8 @@ type EnvVar struct {
 	Value string `json:"value"`
 }
 
-// AWSConfig represents AWS configuration for a project
-type AWSConfig struct {
-	AWSKeypair *AWSKeypair `json:"keypair"`
-}
-
-// AWSKeypair represents the AWS access/secret key for a project
-// SecretKey will be a masked value
-type AWSKeypair struct {
-	AccessKey string `json:"access_key_id"`
-	SecretKey string `json:"secret_access_key"`
-}
-
 type Project struct {
-	AWSConfig AWSConfig `json:"aws"`
-	Username  string    `json:"username"`
-	Reponame  string    `json:"reponame"`
-	VcsType   string    `json:"vcs_type"`
+	Username string `json:"username"`
+	Reponame string `json:"reponame"`
+	VcsType  string `json:"vcs_type"`
 }

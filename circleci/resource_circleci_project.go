@@ -46,40 +46,6 @@ func resourceProject() *schema.Resource {
 					return
 				},
 			},
-			"aws_config": {
-				Type:     schema.TypeList,
-				Optional: true,
-				MaxItems: 1,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"keypair": {
-							Type:     schema.TypeList,
-							Optional: true,
-							MaxItems: 1,
-							Elem: &schema.Resource{
-								Schema: map[string]*schema.Schema{
-									"access_key": {
-										Type:        schema.TypeString,
-										Required:    true,
-										Description: "AWS access key id.",
-										StateFunc: func(v interface{}) string {
-											return maskCircleCiSecret(v.(string))
-										},
-									},
-									"secret_key": {
-										Type:        schema.TypeString,
-										Required:    true,
-										Description: "AWS secret key.",
-										StateFunc: func(v interface{}) string {
-											return maskCircleCiSecret(v.(string))
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
 			"variable": {
 				Type:     schema.TypeSet,
 				Optional: true,
@@ -113,32 +79,12 @@ func resourceProjectCreate(d *schema.ResourceData, meta interface{}) error {
 
 	log.Printf("[DEBUG] Following %s/%s %s project on CircleCI", account, reponame, vcstype)
 
-	d.Partial(true)
-
 	_, err := client.FollowProject(vcstype, account, reponame)
 	if err != nil {
 		return fmt.Errorf("error following project: %s", err)
 	}
 
 	d.SetId(buildId(vcstype, account, reponame))
-
-	if _, ok := d.GetOk("aws_config.0.keypair"); ok {
-		err := client.SetAwsKeys(
-			vcstype,
-			account,
-			reponame,
-			d.Get("aws_config.0.keypair.0.access_key").(string),
-			d.Get("aws_config.0.keypair.0.secret_key").(string),
-		)
-
-		if err != nil {
-			return err
-		}
-
-		d.SetPartial("aws_config.0.keypair")
-	}
-
-	d.Partial(false)
 
 	return resourceProjectUpdate(d, meta)
 }
@@ -158,10 +104,6 @@ func resourceProjectRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("account", project.Username)
 	d.Set("project", project.Reponame)
 
-	if err := flattenAwsConfig(d, project); err != nil {
-		return fmt.Errorf("Error setting aws_config: %v", err)
-	}
-
 	envVars, err := client.ListEnvVars(vcstype, account, reponame)
 
 	if err := flattenEnvironmentVariables(d, envVars); err != nil {
@@ -177,40 +119,6 @@ func resourceProjectUpdate(d *schema.ResourceData, meta interface{}) error {
 	vcstype, account, reponame := expandId(d.Id())
 
 	d.Partial(true)
-
-	if d.HasChange("aws_config.0.keypair") {
-		oraw, nraw := d.GetChange("aws_config.0.keypair")
-		o := oraw.([]interface{})
-		n := nraw.([]interface{})
-
-		if len(o) > 0 && len(n) == 1 {
-			err := client.SetAwsKeys(
-				vcstype,
-				account,
-				reponame,
-				d.Get("aws_config.0.keypair.0.access_key").(string),
-				d.Get("aws_config.0.keypair.0.secret_key").(string),
-			)
-
-			if err != nil {
-				return err
-			}
-		}
-
-		if len(n) == 0 && len(o) == 1 {
-			err := client.RemoveAwsKeys(
-				vcstype,
-				account,
-				reponame,
-			)
-
-			if err != nil {
-				return err
-			}
-		}
-
-		d.SetPartial("aws_config.0.keypair")
-	}
 
 	if d.HasChange("variable") {
 		o, n := d.GetChange("variable")
@@ -272,29 +180,6 @@ func resourceProjectDelete(d *schema.ResourceData, meta interface{}) error {
 	err := client.DisableProject(vcstype, account, reponame)
 	if err != nil {
 		return fmt.Errorf("Error disabling project %q: %s", d.Id(), err)
-	}
-
-	return nil
-}
-
-func flattenAwsConfig(d *schema.ResourceData, project *Project) error {
-	awsConfig := project.AWSConfig
-
-	conf := map[string]interface{}{}
-
-	if awsConfig.AWSKeypair != nil {
-		conf["keypair"] = []interface{}{
-			map[string]interface{}{
-				"access_key": awsConfig.AWSKeypair.AccessKey,
-				"secret_key": awsConfig.AWSKeypair.SecretKey,
-			},
-		}
-	}
-
-	if err := d.Set("aws_config", []interface{}{
-		conf,
-	}); err != nil {
-		return err
 	}
 
 	return nil
