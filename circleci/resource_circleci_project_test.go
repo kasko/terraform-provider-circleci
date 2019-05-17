@@ -27,8 +27,6 @@ func TestAccCircleCIProject_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("circleci_project.project", "vcs_type", "github"),
 					resource.TestCheckResourceAttr("circleci_project.project", "account", org),
 					resource.TestCheckResourceAttr("circleci_project.project", "project", repo),
-					resource.TestCheckResourceAttr("circleci_project.project", "aws_config.0.keypair.0.access_key", "xxxx__ID"),
-					resource.TestCheckResourceAttr("circleci_project.project", "aws_config.0.keypair.0.secret_key", "xxxx__SC"),
 					resource.TestCheckResourceAttr("circleci_project.project", "variable.3244239841.name", "__________X_FOO"),
 					resource.TestCheckResourceAttr("circleci_project.project", "variable.3244239841.value", "xxxxr"),
 					testAccCheckCircleCiProjectAttributes(&proj, &testAccCircleCIProjectExpectedAttributes{}),
@@ -41,8 +39,6 @@ func TestAccCircleCIProject_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("circleci_project.project", "vcs_type", "github"),
 					resource.TestCheckResourceAttr("circleci_project.project", "account", org),
 					resource.TestCheckResourceAttr("circleci_project.project", "project", repo),
-					resource.TestCheckResourceAttr("circleci_project.project", "aws_config.0.keypair.0.access_key", "xxxxID_2"),
-					resource.TestCheckResourceAttr("circleci_project.project", "aws_config.0.keypair.0.secret_key", "xxxxSC_2"),
 					resource.TestCheckResourceAttr("circleci_project.project", "variable.1444073175.name", "RENAMED_X_FOO"),
 					resource.TestCheckResourceAttr("circleci_project.project", "variable.1444073175.value", "xxxxr"),
 					resource.TestCheckResourceAttr("circleci_project.project", "variable.3732134584.name", "X_FIZZ"),
@@ -127,13 +123,6 @@ resource "circleci_project" "project" {
     name  = "__________X_FOO"
     value = "bar"
   }
-
-  aws_config {
-    keypair {
-      access_key = "__DUMMY_AWS_ACCESS_KEY__ID"
-      secret_key = "__DUMMY_AWS_SECRET_KEY__SC"
-    }
-  }
 }
 `, org, repo)
 }
@@ -153,13 +142,6 @@ resource "circleci_project" "project" {
   variable {
     name  = "X_FIZZ"
     value = "buzz"
-  }
-
-  aws_config {
-    keypair {
-      access_key = "__DUMMY_AWS_ACCESS_KEY__ID_2"
-      secret_key = "__DUMMY_AWS_SECRET_KEY__SC_2"
-    }
   }
 }
 `, org, repo)

@@ -51,13 +51,6 @@ resource "circleci_project" "project" {
     name  = "X_FOO"
     value = "bar"
   }
-
-  aws_config {
-    keypair {
-      access_key = "AWS_ACCESS_KEY"
-      secret_key = "AWS_SECRET_KEY"
-    }
-  }
 }
 ```
 
@@ -67,18 +60,10 @@ resource "circleci_project" "project" {
 - `account` - (Required) This is the GitHub or Bitbucket project account (organization) name for the target project (not your personal GitHub or Bitbucket username).
 - `project` - (Required) This is the GitHub or Bitbucket project (repository) name.
 - `variable` - Environment variable for CircleCI project.
-- `aws_config` - AWS configuration for CircleCI.
 
 Type `variable` block supports:
 - `name` - (Required) The name of the variable to be added to CircleCI project configuration.
 - `value` - (Required) The value of the variable to be added to CircleCI project configuration.
-
-Type `aws_config` block supports:
-- `keypair` - AWS keypair to be configured for CircleCI project.
-
-Type `keypair` block supports:
-- `access_key` - (Required) AWS access key id.
-- `secret_key` - (Required) AWS secret key.
 
 #### Import
 
