@@ -1,10 +1,13 @@
----
-version: 2
+version: 2.1
+
+orbs:
+  go: circleci/go@1.7.0
 
 jobs:
   build:
-    docker:
-      - image: circleci/golang:1.10
+    executor:
+      name: go/default
+      tag: '1.17'
     working_directory: /go/src/github.com/kasko/terraform-provider-circleci
     steps:
       - checkout
@@ -28,8 +31,9 @@ jobs:
           command: make vet
 
   release:
-    docker:
-      - image: circleci/golang:1.10
+    executor:
+      name: go/default
+      tag: '1.17'
     working_directory: /go/src/github.com/kasko/terraform-provider-circleci
     steps:
       - checkout
