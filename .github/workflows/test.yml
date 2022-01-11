@@ -79,7 +79,7 @@ jobs:
 
     - name: TF acceptance tests
       timeout-minutes: 10
-      env:
+      # env:
         # Skip acceptance tests on CI.
         # TF_ACC: "1"
 
