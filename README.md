@@ -2,14 +2,6 @@
 
 Terraform provider for [CircleCI](https://circleci.com/) continuous integration platform.
 
-## Installation
-
-__NOTE__: `terraform` does not currently provide a way to easily install 3rd party providers. Until this is implemented,
-the provider can be installed by manually placing the binary in `~/.terraform.d/plugins/` directory.
-
-Go to [resales](https://github.com/kasko/terraform-provider-circleci/releases) page, find and download the appropriate
-binary for you operating system. Extract the archive and place the binary in `~/.terraform.d/plugins/` directory.
-
 ## Configuration
 
 #### Example Usage
@@ -74,56 +66,3 @@ Projects can be imported using the vcs type, combined with the organization name
 ```
 terraform import circleci_project.project github:organization_name:repo_name
 ```
-
-## Building The Provider
-
-Clone repository to: `$GOPATH/src/github.com/kasko/terraform-provider-circleci`
-
-```sh
-$ mkdir -p $GOPATH/src/github.com/kasko; cd $GOPATH/src/github.com/kasko
-$ git clone git@github.com:kasko/terraform-provider-circleci.git
-```
-
-Enter the provider directory and build the provider
-
-```sh
-$ cd $GOPATH/src/github.com/kasko/terraform-provider-circleci
-$ make build
-# or if you're on a mac:
-$ gnumake build
-```
-
-## Developing the Provider
-
-If you wish to work on the provider, you'll first need [Go](http://www.golang.org) installed on your machine (version 1.8+ is *required*). You'll also need to correctly setup a [GOPATH](http://golang.org/doc/code.html#GOPATH), as well as adding `$GOPATH/bin` to your `$PATH`.
-
-To compile the provider, run `make build`. This will build the provider and put the provider binary in the `$GOPATH/bin` directory.
-
-```sh
-$ make build
-...
-$ $GOPATH/bin/terraform-provider-circleci
-...
-```
-
-In order to test the provider, you can simply run `make test`.
-
-```sh
-$ make test
-```
-
-In order to run the full suite of Acceptance tests, run `make testacc`.
-
-__NOTE__: Acceptance tests create real resources, and often cost money to run.
-
-```sh
-$ make testacc
-```
-
-## License
-
-For license please check the [LICENSE](LICENSE) file.
-
-## TODO
-
-- Cover resources with tests.
