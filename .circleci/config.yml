@@ -11,21 +11,12 @@ jobs:
     working_directory: /go/src/github.com/kasko/terraform-provider-circleci
     steps:
       - checkout
-      - run:
-          name: Install go cookie
-          command: bash scripts/gogetcookie.sh
-      - run:
-          name: Install govendor
-          command: go get github.com/kardianos/govendor
-      - run:
-          name: Sync
-          command: govendor sync
+      - go/load-cache
+      - go/mod-download
+      - go/save-cache
       - run:
           name: Run tests
           command: make test
-      - run:
-          name: Check vendor status
-          command: make vendor-status
       - run:
           name: Run vet
           command: make vet
