@@ -80,15 +80,20 @@ type Session struct {
 // or to directly send a header
 type sendReady struct {
 	Hdr  []byte
-	Body io.Reader
+	Body []byte
 	Err  chan error
 }
 
 // newSession is used to construct a new session
 func newSession(config *Config, conn io.ReadWriteCloser, client bool) *Session {
+	logger := config.Logger
+	if logger == nil {
+		logger = log.New(config.LogOutput, "", log.LstdFlags)
+	}
+
 	s := &Session{
 		config:     config,
-		logger:     log.New(config.LogOutput, "", log.LstdFlags),
+		logger:     logger,
 		conn:       conn,
 		bufRead:    bufio.NewReader(conn),
 		pings:      make(map[uint32]chan struct{}),
@@ -121,6 +126,12 @@ func (s *Session) IsClosed() bool {
 	default:
 		return false
 	}
+}
+
+// CloseChan returns a read-only channel which is closed as
+// soon as the session is closed.
+func (s *Session) CloseChan() <-chan struct{} {
+	return s.shutdownCh
 }
 
 // NumStreams returns the number of currently open streams
@@ -173,6 +184,10 @@ GET_ID:
 	s.inflight[id] = struct{}{}
 	s.streamLock.Unlock()
 
+	if s.config.StreamOpenTimeout > 0 {
+		go s.setOpenTimeout(stream)
+	}
+
 	// Send the window update to create
 	if err := stream.sendWindowUpdate(); err != nil {
 		select {
@@ -183,6 +198,27 @@ GET_ID:
 		return nil, err
 	}
 	return stream, nil
+}
+
+// setOpenTimeout implements a timeout for streams that are opened but not established.
+// If the StreamOpenTimeout is exceeded we assume the peer is unable to ACK,
+// and close the session.
+// The number of running timers is bounded by the capacity of the synCh.
+func (s *Session) setOpenTimeout(stream *Stream) {
+	timer := time.NewTimer(s.config.StreamOpenTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-stream.establishCh:
+		return
+	case <-s.shutdownCh:
+		return
+	case <-timer.C:
+		// Timeout reached while waiting for ACK.
+		// Close the session to force connection re-establishment.
+		s.logger.Printf("[ERR] yamux: aborted stream open (destination=%s): %v", s.RemoteAddr().String(), ErrTimeout.err)
+		s.Close()
+	}
 }
 
 // Accept is used to block until the next available stream
@@ -303,8 +339,10 @@ func (s *Session) keepalive() {
 		case <-time.After(s.config.KeepAliveInterval):
 			_, err := s.Ping()
 			if err != nil {
-				s.logger.Printf("[ERR] yamux: keepalive failed: %v", err)
-				s.exitErr(ErrKeepAliveTimeout)
+				if err != ErrSessionShutdown {
+					s.logger.Printf("[ERR] yamux: keepalive failed: %v", err)
+					s.exitErr(ErrKeepAliveTimeout)
+				}
 				return
 			}
 		case <-s.shutdownCh:
@@ -314,7 +352,7 @@ func (s *Session) keepalive() {
 }
 
 // waitForSendErr waits to send a header, checking for a potential shutdown
-func (s *Session) waitForSend(hdr header, body io.Reader) error {
+func (s *Session) waitForSend(hdr header, body []byte) error {
 	errCh := make(chan error, 1)
 	return s.waitForSendErr(hdr, body, errCh)
 }
@@ -322,9 +360,18 @@ func (s *Session) waitForSend(hdr header, body io.Reader) error {
 // waitForSendErr waits to send a header with optional data, checking for a
 // potential shutdown. Since there's the expectation that sends can happen
 // in a timely manner, we enforce the connection write timeout here.
-func (s *Session) waitForSendErr(hdr header, body io.Reader, errCh chan error) error {
-	timer := time.NewTimer(s.config.ConnectionWriteTimeout)
-	defer timer.Stop()
+func (s *Session) waitForSendErr(hdr header, body []byte, errCh chan error) error {
+	t := timerPool.Get()
+	timer := t.(*time.Timer)
+	timer.Reset(s.config.ConnectionWriteTimeout)
+	defer func() {
+		timer.Stop()
+		select {
+		case <-timer.C:
+		default:
+		}
+		timerPool.Put(t)
+	}()
 
 	ready := sendReady{Hdr: hdr, Body: body, Err: errCh}
 	select {
@@ -349,8 +396,17 @@ func (s *Session) waitForSendErr(hdr header, body io.Reader, errCh chan error) e
 // the send happens right here, we enforce the connection write timeout if we
 // can't queue the header to be sent.
 func (s *Session) sendNoWait(hdr header) error {
-	timer := time.NewTimer(s.config.ConnectionWriteTimeout)
-	defer timer.Stop()
+	t := timerPool.Get()
+	timer := t.(*time.Timer)
+	timer.Reset(s.config.ConnectionWriteTimeout)
+	defer func() {
+		timer.Stop()
+		select {
+		case <-timer.C:
+		default:
+		}
+		timerPool.Put(t)
+	}()
 
 	select {
 	case s.sendCh <- sendReady{Hdr: hdr}:
@@ -384,7 +440,7 @@ func (s *Session) send() {
 
 			// Send data from a body if given
 			if ready.Body != nil {
-				_, err := io.Copy(s.conn, ready.Body)
+				_, err := s.conn.Write(ready.Body)
 				if err != nil {
 					s.logger.Printf("[ERR] yamux: Failed to write body: %v", err)
 					asyncSendErr(ready.Err, err)
@@ -408,11 +464,20 @@ func (s *Session) recv() {
 	}
 }
 
+// Ensure that the index of the handler (typeData/typeWindowUpdate/etc) matches the message type
+var (
+	handlers = []func(*Session, header) error{
+		typeData:         (*Session).handleStreamMessage,
+		typeWindowUpdate: (*Session).handleStreamMessage,
+		typePing:         (*Session).handlePing,
+		typeGoAway:       (*Session).handleGoAway,
+	}
+)
+
 // recvLoop continues to receive data until a fatal error is encountered
 func (s *Session) recvLoop() error {
 	defer close(s.recvDoneCh)
 	hdr := header(make([]byte, headerSize))
-	var handler func(header) error
 	for {
 		// Read the header
 		if _, err := io.ReadFull(s.bufRead, hdr); err != nil {
@@ -428,22 +493,12 @@ func (s *Session) recvLoop() error {
 			return ErrInvalidVersion
 		}
 
-		// Switch on the type
-		switch hdr.MsgType() {
-		case typeData:
-			handler = s.handleStreamMessage
-		case typeWindowUpdate:
-			handler = s.handleStreamMessage
-		case typeGoAway:
-			handler = s.handleGoAway
-		case typePing:
-			handler = s.handlePing
-		default:
+		mt := hdr.MsgType()
+		if mt < typeData || mt > typeGoAway {
 			return ErrInvalidMsgType
 		}
 
-		// Invoke the handler
-		if err := handler(hdr); err != nil {
+		if err := handlers[mt](s, hdr); err != nil {
 			return err
 		}
 	}

@@ -2,11 +2,11 @@ package circleci
 
 import (
 	"fmt"
+	"hash/crc32"
 	"log"
 	"strings"
 
-	"github.com/hashicorp/terraform/helper/hashcode"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 func resourceProject() *schema.Resource {
@@ -160,11 +160,10 @@ func resourceProjectUpdate(d *schema.ResourceData, meta interface{}) error {
 			)
 
 			if err != nil {
+				d.Partial(true)
 				return err
 			}
 		}
-
-		d.SetPartial("variable")
 	}
 
 	d.Partial(false)
@@ -225,7 +224,24 @@ func variableHash(v interface{}) int {
 		value = maskCircleCiSecret(value)
 	}
 
-	return hashcode.String(
+	return hashcodeString(
 		fmt.Sprintf("%s:%s", name, value),
 	)
+}
+
+// String hashes a string to a unique hashcode.
+//
+// crc32 returns a uint32, but for our use we need
+// and non negative integer. Here we cast to an integer
+// and invert it if the result is negative.
+func hashcodeString(s string) int {
+	v := int(crc32.ChecksumIEEE([]byte(s)))
+	if v >= 0 {
+		return v
+	}
+	if -v >= 0 {
+		return -v
+	}
+	// v == MinInt
+	return 0
 }
