@@ -6,14 +6,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // untar is a shared helper for untarring an archive. The reader should provide
 // an uncompressed view of the tar archive.
-func untar(input io.Reader, dst, src string, dir bool) error {
+func untar(input io.Reader, dst, src string, dir bool, umask os.FileMode) error {
 	tarR := tar.NewReader(input)
 	done := false
 	dirHdrs := []*tar.Header{}
+	now := time.Now()
 	for {
 		hdr, err := tarR.Next()
 		if err == io.EOF {
@@ -49,7 +51,7 @@ func untar(input io.Reader, dst, src string, dir bool) error {
 			}
 
 			// A directory, just make the directory and continue unarchiving...
-			if err := os.MkdirAll(path, 0755); err != nil {
+			if err := os.MkdirAll(path, mode(0755, umask)); err != nil {
 				return err
 			}
 
@@ -65,7 +67,7 @@ func untar(input io.Reader, dst, src string, dir bool) error {
 
 			// Check that the directory exists, otherwise create it
 			if _, err := os.Stat(dstPath); os.IsNotExist(err) {
-				if err := os.MkdirAll(dstPath, 0755); err != nil {
+				if err := os.MkdirAll(dstPath, mode(0755, umask)); err != nil {
 					return err
 				}
 			}
@@ -80,32 +82,42 @@ func untar(input io.Reader, dst, src string, dir bool) error {
 		done = true
 
 		// Open the file for writing
-		dstF, err := os.Create(path)
-		if err != nil {
-			return err
-		}
-		_, err = io.Copy(dstF, tarR)
-		dstF.Close()
+		err = copyReader(path, tarR, hdr.FileInfo().Mode(), umask)
 		if err != nil {
 			return err
 		}
 
-		// Chmod the file
-		if err := os.Chmod(path, hdr.FileInfo().Mode()); err != nil {
-			return err
+		// Set the access and modification time if valid, otherwise default to current time
+		aTime := now
+		mTime := now
+		if hdr.AccessTime.Unix() > 0 {
+			aTime = hdr.AccessTime
 		}
-
-		// Set the access and modification time
-		if err := os.Chtimes(path, hdr.AccessTime, hdr.ModTime); err != nil {
+		if hdr.ModTime.Unix() > 0 {
+			mTime = hdr.ModTime
+		}
+		if err := os.Chtimes(path, aTime, mTime); err != nil {
 			return err
 		}
 	}
 
-	// Adding a file or subdirectory changes the mtime of a directory
-	// We therefore wait until we've extracted everything and then set the mtime and atime attributes
+	// Perform a final pass over extracted directories to update metadata
 	for _, dirHdr := range dirHdrs {
 		path := filepath.Join(dst, dirHdr.Name)
-		if err := os.Chtimes(path, dirHdr.AccessTime, dirHdr.ModTime); err != nil {
+		// Chmod the directory since they might be created before we know the mode flags
+		if err := os.Chmod(path, mode(dirHdr.FileInfo().Mode(), umask)); err != nil {
+			return err
+		}
+		// Set the mtime/atime attributes since they would have been changed during extraction
+		aTime := now
+		mTime := now
+		if dirHdr.AccessTime.Unix() > 0 {
+			aTime = dirHdr.AccessTime
+		}
+		if dirHdr.ModTime.Unix() > 0 {
+			mTime = dirHdr.ModTime
+		}
+		if err := os.Chtimes(path, aTime, mTime); err != nil {
 			return err
 		}
 	}
@@ -113,17 +125,17 @@ func untar(input io.Reader, dst, src string, dir bool) error {
 	return nil
 }
 
-// tarDecompressor is an implementation of Decompressor that can
+// TarDecompressor is an implementation of Decompressor that can
 // unpack tar files.
-type tarDecompressor struct{}
+type TarDecompressor struct{}
 
-func (d *tarDecompressor) Decompress(dst, src string, dir bool) error {
+func (d *TarDecompressor) Decompress(dst, src string, dir bool, umask os.FileMode) error {
 	// If we're going into a directory we should make that first
 	mkdir := dst
 	if !dir {
 		mkdir = filepath.Dir(dst)
 	}
-	if err := os.MkdirAll(mkdir, 0755); err != nil {
+	if err := os.MkdirAll(mkdir, mode(0755, umask)); err != nil {
 		return err
 	}
 
@@ -134,5 +146,5 @@ func (d *tarDecompressor) Decompress(dst, src string, dir bool) error {
 	}
 	defer f.Close()
 
-	return untar(f, dst, src, dir)
+	return untar(f, dst, src, dir, umask)
 }

@@ -1,6 +1,8 @@
 package getter
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
@@ -8,28 +10,50 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 
 	urlhelper "github.com/hashicorp/go-getter/helper/url"
-	"github.com/hashicorp/go-safetemp"
-	"github.com/hashicorp/go-version"
+	safetemp "github.com/hashicorp/go-safetemp"
+	version "github.com/hashicorp/go-version"
 )
 
 // GitGetter is a Getter implementation that will download a module from
 // a git repository.
-type GitGetter struct{}
+type GitGetter struct {
+	getter
+}
+
+var defaultBranchRegexp = regexp.MustCompile(`\s->\sorigin/(.*)`)
+var lsRemoteSymRefRegexp = regexp.MustCompile(`ref: refs/heads/([^\s]+).*`)
 
 func (g *GitGetter) ClientMode(_ *url.URL) (ClientMode, error) {
 	return ClientModeDir, nil
 }
 
 func (g *GitGetter) Get(dst string, u *url.URL) error {
+	ctx := g.Context()
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git must be available and on the PATH")
 	}
 
+	// The port number must be parseable as an integer. If not, the user
+	// was probably trying to use a scp-style address, in which case the
+	// ssh:// prefix must be removed to indicate that.
+	//
+	// This is not necessary in versions of Go which have patched
+	// CVE-2019-14809 (e.g. Go 1.12.8+)
+	if portStr := u.Port(); portStr != "" {
+		if _, err := strconv.ParseUint(portStr, 10, 16); err != nil {
+			return fmt.Errorf("invalid port number %q; if using the \"scp-like\" git address scheme where a colon introduces the path instead, remove the ssh:// portion and use just the git:: prefix", portStr)
+		}
+	}
+
 	// Extract some query parameters we use
 	var ref, sshKey string
+	depth := 0 // 0 means "don't use shallow clone"
 	q := u.Query()
 	if len(q) > 0 {
 		ref = q.Get("ref")
@@ -37,6 +61,11 @@ func (g *GitGetter) Get(dst string, u *url.URL) error {
 
 		sshKey = q.Get("sshkey")
 		q.Del("sshkey")
+
+		if n, err := strconv.Atoi(q.Get("depth")); err == nil {
+			depth = n
+		}
+		q.Del("depth")
 
 		// Copy the URL
 		var newU url.URL = *u
@@ -84,9 +113,9 @@ func (g *GitGetter) Get(dst string, u *url.URL) error {
 		return err
 	}
 	if err == nil {
-		err = g.update(dst, sshKeyFile, ref)
+		err = g.update(ctx, dst, sshKeyFile, ref, depth)
 	} else {
-		err = g.clone(dst, sshKeyFile, u)
+		err = g.clone(ctx, dst, sshKeyFile, u, ref, depth)
 	}
 	if err != nil {
 		return err
@@ -100,7 +129,7 @@ func (g *GitGetter) Get(dst string, u *url.URL) error {
 	}
 
 	// Lastly, download any/all submodules.
-	return g.fetchSubmodules(dst, sshKeyFile)
+	return g.fetchSubmodules(ctx, dst, sshKeyFile, depth)
 }
 
 // GetFile for Git doesn't support updating at this time. It will download
@@ -138,23 +167,66 @@ func (g *GitGetter) checkout(dst string, ref string) error {
 	return getRunCommand(cmd)
 }
 
-func (g *GitGetter) clone(dst, sshKeyFile string, u *url.URL) error {
-	cmd := exec.Command("git", "clone", u.String(), dst)
+// gitCommitIDRegex is a pattern intended to match strings that seem
+// "likely to be" git commit IDs, rather than named refs. This cannot be
+// an exact decision because it's valid to name a branch or tag after a series
+// of hexadecimal digits too.
+//
+// We require at least 7 digits here because that's the smallest size git
+// itself will typically generate, and so it'll reduce the risk of false
+// positives on short branch names that happen to also be "hex words".
+var gitCommitIDRegex = regexp.MustCompile("^[0-9a-fA-F]{7,40}$")
+
+func (g *GitGetter) clone(ctx context.Context, dst, sshKeyFile string, u *url.URL, ref string, depth int) error {
+	args := []string{"clone"}
+
+	originalRef := ref // we handle an unspecified ref differently than explicitly selecting the default branch below
+	if ref == "" {
+		ref = findRemoteDefaultBranch(u)
+	}
+	if depth > 0 {
+		args = append(args, "--depth", strconv.Itoa(depth))
+		args = append(args, "--branch", ref)
+	}
+	args = append(args, u.String(), dst)
+
+	cmd := exec.CommandContext(ctx, "git", args...)
 	setupGitEnv(cmd, sshKeyFile)
-	return getRunCommand(cmd)
+	err := getRunCommand(cmd)
+	if err != nil {
+		if depth > 0 && originalRef != "" {
+			// If we're creating a shallow clone then the given ref must be
+			// a named ref (branch or tag) rather than a commit directly.
+			// We can't accurately recognize the resulting error here without
+			// hard-coding assumptions about git's human-readable output, but
+			// we can at least try a heuristic.
+			if gitCommitIDRegex.MatchString(originalRef) {
+				return fmt.Errorf("%w (note that setting 'depth' requires 'ref' to be a branch or tag name)", err)
+			}
+		}
+		return err
+	}
+
+	if depth < 1 && originalRef != "" {
+		// If we didn't add --depth and --branch above then we will now be
+		// on the remote repository's default branch, rather than the selected
+		// ref, so we'll need to fix that before we return.
+		return g.checkout(dst, originalRef)
+	}
+	return nil
 }
 
-func (g *GitGetter) update(dst, sshKeyFile, ref string) error {
+func (g *GitGetter) update(ctx context.Context, dst, sshKeyFile, ref string, depth int) error {
 	// Determine if we're a branch. If we're NOT a branch, then we just
 	// switch to master prior to checking out
-	cmd := exec.Command("git", "show-ref", "-q", "--verify", "refs/heads/"+ref)
+	cmd := exec.CommandContext(ctx, "git", "show-ref", "-q", "--verify", "refs/heads/"+ref)
 	cmd.Dir = dst
 
 	if getRunCommand(cmd) != nil {
-		// Not a branch, switch to master. This will also catch non-existent
-		// branches, in which case we want to switch to master and then
-		// checkout the proper branch later.
-		ref = "master"
+		// Not a branch, switch to default branch. This will also catch
+		// non-existent branches, in which case we want to switch to default
+		// and then checkout the proper branch later.
+		ref = findDefaultBranch(dst)
 	}
 
 	// We have to be on a branch to pull
@@ -162,18 +234,57 @@ func (g *GitGetter) update(dst, sshKeyFile, ref string) error {
 		return err
 	}
 
-	cmd = exec.Command("git", "pull", "--ff-only")
+	if depth > 0 {
+		cmd = exec.Command("git", "pull", "--depth", strconv.Itoa(depth), "--ff-only")
+	} else {
+		cmd = exec.Command("git", "pull", "--ff-only")
+	}
+
 	cmd.Dir = dst
 	setupGitEnv(cmd, sshKeyFile)
 	return getRunCommand(cmd)
 }
 
 // fetchSubmodules downloads any configured submodules recursively.
-func (g *GitGetter) fetchSubmodules(dst, sshKeyFile string) error {
-	cmd := exec.Command("git", "submodule", "update", "--init", "--recursive")
+func (g *GitGetter) fetchSubmodules(ctx context.Context, dst, sshKeyFile string, depth int) error {
+	args := []string{"submodule", "update", "--init", "--recursive"}
+	if depth > 0 {
+		args = append(args, "--depth", strconv.Itoa(depth))
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dst
 	setupGitEnv(cmd, sshKeyFile)
 	return getRunCommand(cmd)
+}
+
+// findDefaultBranch checks the repo's origin remote for its default branch
+// (generally "master"). "master" is returned if an origin default branch
+// can't be determined.
+func findDefaultBranch(dst string) string {
+	var stdoutbuf bytes.Buffer
+	cmd := exec.Command("git", "branch", "-r", "--points-at", "refs/remotes/origin/HEAD")
+	cmd.Dir = dst
+	cmd.Stdout = &stdoutbuf
+	err := cmd.Run()
+	matches := defaultBranchRegexp.FindStringSubmatch(stdoutbuf.String())
+	if err != nil || matches == nil {
+		return "master"
+	}
+	return matches[len(matches)-1]
+}
+
+// findRemoteDefaultBranch checks the remote repo's HEAD symref to return the remote repo's
+// default branch. "master" is returned if no HEAD symref exists.
+func findRemoteDefaultBranch(u *url.URL) string {
+	var stdoutbuf bytes.Buffer
+	cmd := exec.Command("git", "ls-remote", "--symref", u.String(), "HEAD")
+	cmd.Stdout = &stdoutbuf
+	err := cmd.Run()
+	matches := lsRemoteSymRefRegexp.FindStringSubmatch(stdoutbuf.String())
+	if err != nil || matches == nil {
+		return "master"
+	}
+	return matches[len(matches)-1]
 }
 
 // setupGitEnv sets up the environment for the given command. This is used to
@@ -187,7 +298,7 @@ func setupGitEnv(cmd *exec.Cmd, sshKeyFile string) {
 	// with versions of Go < 1.9.
 	env := os.Environ()
 	for i, v := range env {
-		if strings.HasPrefix(v, gitSSHCommand) {
+		if strings.HasPrefix(v, gitSSHCommand) && len(v) > len(gitSSHCommand) {
 			sshCmd = []string{v}
 
 			env[i], env[len(env)-1] = env[len(env)-1], env[i]
@@ -202,6 +313,9 @@ func setupGitEnv(cmd *exec.Cmd, sshKeyFile string) {
 
 	if sshKeyFile != "" {
 		// We have an SSH key temp file configured, tell ssh about this.
+		if runtime.GOOS == "windows" {
+			sshKeyFile = strings.Replace(sshKeyFile, `\`, `/`, -1)
+		}
 		sshCmd = append(sshCmd, "-i", sshKeyFile)
 	}
 
@@ -224,11 +338,20 @@ func checkGitVersion(min string) error {
 	}
 
 	fields := strings.Fields(string(out))
-	if len(fields) != 3 {
+	if len(fields) < 3 {
 		return fmt.Errorf("Unexpected 'git version' output: %q", string(out))
 	}
+	v := fields[2]
+	if runtime.GOOS == "windows" && strings.Contains(v, ".windows.") {
+		// on windows, git version will return for example:
+		// git version 2.20.1.windows.1
+		// Which does not follow the semantic versionning specs
+		// https://semver.org. We remove that part in order for
+		// go-version to not error.
+		v = v[:strings.Index(v, ".windows.")]
+	}
 
-	have, err := version.NewVersion(fields[2])
+	have, err := version.NewVersion(v)
 	if err != nil {
 		return err
 	}

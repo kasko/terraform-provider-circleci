@@ -30,6 +30,44 @@ func NumberVal(v *big.Float) Value {
 	}
 }
 
+// ParseNumberVal returns a Value of type number produced by parsing the given
+// string as a decimal real number. To ensure that two identical strings will
+// always produce an equal number, always use this function to derive a number
+// from a string; it will ensure that the precision and rounding mode for the
+// internal big decimal is configured in a consistent way.
+//
+// If the given string cannot be parsed as a number, the returned error has
+// the message "a number is required", making it suitable to return to an
+// end-user to signal a type conversion error.
+//
+// If the given string contains a number that becomes a recurring fraction
+// when expressed in binary then it will be truncated to have a 512-bit
+// mantissa. Note that this is a higher precision than that of a float64,
+// so coverting the same decimal number first to float64 and then calling
+// NumberFloatVal will not produce an equal result; the conversion first
+// to float64 will round the mantissa to fewer than 512 bits.
+func ParseNumberVal(s string) (Value, error) {
+	// Base 10, precision 512, and rounding to nearest even is the standard
+	// way to handle numbers arriving as strings.
+	f, _, err := big.ParseFloat(s, 10, 512, big.ToNearestEven)
+	if err != nil {
+		return NilVal, fmt.Errorf("a number is required")
+	}
+	return NumberVal(f), nil
+}
+
+// MustParseNumberVal is like ParseNumberVal but it will panic in case of any
+// error. It can be used during initialization or any other situation where
+// the given string is a constant or otherwise known to be correct by the
+// caller.
+func MustParseNumberVal(s string) Value {
+	ret, err := ParseNumberVal(s)
+	if err != nil {
+		panic(err)
+	}
+	return ret
+}
+
 // NumberIntVal returns a Value of type Number whose internal value is equal
 // to the given integer.
 func NumberIntVal(v int64) Value {
@@ -148,6 +186,20 @@ func ListValEmpty(element Type) Value {
 	}
 }
 
+// CanListVal returns false if the given Values can not be coalesced
+// into a single List due to inconsistent element types.
+func CanListVal(vals []Value) bool {
+	elementType := DynamicPseudoType
+	for _, val := range vals {
+		if elementType == DynamicPseudoType {
+			elementType = val.ty
+		} else if val.ty != DynamicPseudoType && !elementType.Equals(val.ty) {
+			return false
+		}
+	}
+	return true
+}
+
 // MapVal returns a Value of a map type whose element type is defined by
 // the types of the given values, which must be homogenous.
 //
@@ -189,6 +241,20 @@ func MapValEmpty(element Type) Value {
 	}
 }
 
+// CanMapVal returns false if the given Values can not be coalesced into a
+// single Map due to inconsistent element types.
+func CanMapVal(vals map[string]Value) bool {
+	elementType := DynamicPseudoType
+	for _, val := range vals {
+		if elementType == DynamicPseudoType {
+			elementType = val.ty
+		} else if val.ty != DynamicPseudoType && !elementType.Equals(val.ty) {
+			return false
+		}
+	}
+	return true
+}
+
 // SetVal returns a Value of set type whose element type is defined by
 // the types of the given values, which must be homogenous.
 //
@@ -202,8 +268,13 @@ func SetVal(vals []Value) Value {
 	}
 	elementType := DynamicPseudoType
 	rawList := make([]interface{}, len(vals))
+	var markSets []ValueMarks
 
 	for i, val := range vals {
+		if unmarkedVal, marks := val.UnmarkDeep(); len(marks) > 0 {
+			val = unmarkedVal
+			markSets = append(markSets, marks)
+		}
 		if elementType == DynamicPseudoType {
 			elementType = val.ty
 		} else if val.ty != DynamicPseudoType && !elementType.Equals(val.ty) {
@@ -221,7 +292,27 @@ func SetVal(vals []Value) Value {
 	return Value{
 		ty: Set(elementType),
 		v:  rawVal,
+	}.WithMarks(markSets...)
+}
+
+// CanSetVal returns false if the given Values can not be coalesced
+// into a single Set due to inconsistent element types.
+func CanSetVal(vals []Value) bool {
+	elementType := DynamicPseudoType
+	var markSets []ValueMarks
+
+	for _, val := range vals {
+		if unmarkedVal, marks := val.UnmarkDeep(); len(marks) > 0 {
+			val = unmarkedVal
+			markSets = append(markSets, marks)
+		}
+		if elementType == DynamicPseudoType {
+			elementType = val.ty
+		} else if val.ty != DynamicPseudoType && !elementType.Equals(val.ty) {
+			return false
+		}
 	}
+	return true
 }
 
 // SetValFromValueSet returns a Value of set type based on an already-constructed
