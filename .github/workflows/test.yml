@@ -23,8 +23,8 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Verify vendored modules
-        run: go mod verify && go mod vendor && git diff --exit-code -- vendor go.mod go.sum
+      - name: Verify modules
+        run: go mod verify && go mod tidy && git diff --exit-code -- go.mod go.sum
 
       - name: Vet
         run: go vet ./...
