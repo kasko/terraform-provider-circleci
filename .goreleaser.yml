@@ -3,7 +3,6 @@ version: 2
 builds:
   - env:
       - CGO_ENABLED=0
-      - GOFLAGS=-mod=vendor
     mod_timestamp: '{{ .CommitTimestamp }}'
     flags:
       - -trimpath
