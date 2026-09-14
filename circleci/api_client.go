@@ -12,15 +12,24 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const (
 	queryLimit = 100 // maximum that CircleCI allows
+
+	maxRetries = 4
 )
 
 var (
-	defaultBaseURL = &url.URL{Host: "circleci.com", Scheme: "https", Path: "/api/v1.1/"}
-	defaultLogger  = log.New(os.Stderr, "", log.LstdFlags)
+	defaultBaseURL   = &url.URL{Host: "circleci.com", Scheme: "https", Path: "/api/v1.1/"}
+	defaultV2BaseURL = &url.URL{Host: "circleci.com", Scheme: "https", Path: "/api/v2/"}
+	defaultLogger    = log.New(os.Stderr, "", log.LstdFlags)
+	initialRetryWait = 2 * time.Second
+
+	ErrProjectNotFound = errors.New("project not found")
 )
 
 // Logger is a minimal interface for injecting custom logging logic for debug logs
@@ -121,21 +130,30 @@ func (c *ApiClient) ListProjects() ([]*Project, error) {
 	return projects, nil
 }
 
-// GetProject retrieves a specific project
-// Returns nil of the project is not in the list of watched projects
+// GetProject retrieves a specific project via the v2 API.
+// Returns ErrProjectNotFound if CircleCI answers 404.
 func (c *ApiClient) GetProject(vcstype, account, reponame string) (*Project, error) {
-	projects, err := c.ListProjects()
+	slug := fmt.Sprintf("%s/%s/%s", vcsSlug(vcstype), account, reponame)
+
+	err := c.requestV2("GET", "project/"+slug, nil)
 	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.HTTPStatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %s", ErrProjectNotFound, slug)
+		}
 		return nil, err
 	}
 
-	for _, project := range projects {
-		if vcstype == project.VcsType && account == project.Username && reponame == project.Reponame {
-			return project, nil
-		}
-	}
+	return &Project{Username: account, Reponame: reponame, VcsType: vcstype}, nil
+}
 
-	return nil, errors.New(fmt.Sprintf("Unable to find project %s/%s/%s", vcstype, account, reponame))
+func vcsSlug(vcstype string) string {
+	switch vcstype {
+	case "bitbucket":
+		return "bb"
+	default:
+		return "gh"
+	}
 }
 
 // DisableProject disables a project
@@ -181,27 +199,58 @@ type nopCloser struct {
 func (n nopCloser) Close() error { return nil }
 
 func (c *ApiClient) request(method, path string, responseStruct interface{}, params url.Values, bodyStruct interface{}) error {
+	return c.doRequest(c.baseURL(), method, path, responseStruct, params, bodyStruct)
+}
+
+func (c *ApiClient) requestV2(method, path string, responseStruct interface{}) error {
+	return c.doRequest(defaultV2BaseURL, method, path, responseStruct, nil, nil)
+}
+
+func (c *ApiClient) doRequest(base *url.URL, method, path string, responseStruct interface{}, params url.Values, bodyStruct interface{}) error {
 	if params == nil {
 		params = url.Values{}
 	}
-	params.Set("circle-token", c.Token)
 
-	u := c.baseURL().ResolveReference(&url.URL{Path: path, RawQuery: params.Encode()})
+	u := base.ResolveReference(&url.URL{Path: path, RawQuery: params.Encode()})
 
 	c.debug("building request for %s", u)
 
-	req, err := http.NewRequest(method, u.String(), nil)
-	if err != nil {
-		return err
-	}
-
+	var body []byte
 	if bodyStruct != nil {
 		b, err := json.Marshal(bodyStruct)
 		if err != nil {
 			return err
 		}
+		body = b
+	}
 
-		req.Body = nopCloser{bytes.NewBuffer(b)}
+	wait := initialRetryWait
+	for attempt := 0; ; attempt++ {
+		resp, err := c.send(method, u.String(), body)
+		if err != nil {
+			return err
+		}
+
+		if !isRetryable(resp.StatusCode) || attempt >= maxRetries {
+			return c.handleResponse(resp, responseStruct)
+		}
+
+		resp.Body.Close()
+		delay := retryDelay(resp, wait)
+		c.debug("retrying %s %s after HTTP %d in %s", method, u, resp.StatusCode, delay)
+		time.Sleep(delay)
+		wait *= 2
+	}
+}
+
+func (c *ApiClient) send(method, rawurl string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(method, rawurl, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if body != nil {
+		req.Body = nopCloser{bytes.NewBuffer(body)}
 	}
 
 	req.Header.Add("Accept", "application/json")
@@ -209,13 +258,33 @@ func (c *ApiClient) request(method, path string, responseStruct interface{}, par
 
 	c.debugRequest(req)
 
+	req.Header.Add("Circle-Token", c.Token)
+
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer resp.Body.Close()
 
 	c.debugResponse(resp)
+
+	return resp, nil
+}
+
+func isRetryable(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
+}
+
+func retryDelay(resp *http.Response, fallback time.Duration) time.Duration {
+	if v := strings.TrimSpace(resp.Header.Get("Retry-After")); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return fallback
+}
+
+func (c *ApiClient) handleResponse(resp *http.Response, responseStruct interface{}) error {
+	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		body, err := ioutil.ReadAll(resp.Body)
@@ -241,10 +310,7 @@ func (c *ApiClient) request(method, path string, responseStruct interface{}, par
 	}
 
 	if responseStruct != nil {
-		err = json.NewDecoder(resp.Body).Decode(responseStruct)
-		if err != nil {
-			return err
-		}
+		return json.NewDecoder(resp.Body).Decode(responseStruct)
 	}
 
 	return nil
