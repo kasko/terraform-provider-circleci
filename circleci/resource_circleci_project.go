@@ -1,6 +1,7 @@
 package circleci
 
 import (
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"log"
@@ -92,12 +93,17 @@ func resourceProjectCreate(d *schema.ResourceData, meta interface{}) error {
 func resourceProjectRead(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ApiClient)
 
-	vcstype, account, reponame := expandId(d.Id())
+	id := d.Id()
+	vcstype, account, reponame := expandId(id)
 
 	project, err := client.GetProject(vcstype, account, reponame)
 	if err != nil {
-		d.SetId("")
-		return fmt.Errorf("Error reading CircleCI project %q: %s", d.Id(), err)
+		if errors.Is(err, ErrProjectNotFound) {
+			log.Printf("[WARN] CircleCI project %q not found, removing from state", id)
+			d.SetId("")
+			return nil
+		}
+		return fmt.Errorf("Error reading CircleCI project %q: %s", id, err)
 	}
 
 	d.Set("vcs_type", project.VcsType)
@@ -105,6 +111,9 @@ func resourceProjectRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("project", project.Reponame)
 
 	envVars, err := client.ListEnvVars(vcstype, account, reponame)
+	if err != nil {
+		return fmt.Errorf("Error reading environment variables of CircleCI project %q: %s", id, err)
+	}
 
 	if err := flattenEnvironmentVariables(d, envVars); err != nil {
 		return fmt.Errorf("Error setting environment: %v", err)
