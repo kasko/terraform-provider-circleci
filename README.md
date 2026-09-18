@@ -57,6 +57,13 @@ Type `variable` block supports:
 - `name` - (Required) The name of the variable to be added to CircleCI project configuration.
 - `value` - (Required) The value of the variable to be added to CircleCI project configuration.
 
+#### Attributes Reference
+
+- `id` - `<vcs_type>:<account>:<project>`.
+- `project_id` - CircleCI project UUID. Bind it in an OIDC trust policy: `sub` = `org/<organization_id>/project/<project_id>/user/*`.
+- `organization_id` - CircleCI organization UUID, the OIDC `aud` claim.
+- `slug` - Project slug, e.g. `gh/kasko/repo`.
+
 #### Import
 
 Projects can be imported using the vcs type, organization name and repository name , e.g.
