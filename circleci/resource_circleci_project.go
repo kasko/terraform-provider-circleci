@@ -47,6 +47,21 @@ func resourceProject() *schema.Resource {
 					return
 				},
 			},
+			"project_id": {
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "CircleCI project UUID, as used in the OIDC token sub claim (org/<org-id>/project/<project-id>/user/<user-id>).",
+			},
+			"organization_id": {
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "CircleCI organization UUID, the OIDC token aud claim.",
+			},
+			"slug": {
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "CircleCI project slug, e.g. gh/kasko/repo.",
+			},
 			"variable": {
 				Type:     schema.TypeSet,
 				Optional: true,
@@ -109,6 +124,9 @@ func resourceProjectRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("vcs_type", project.VcsType)
 	d.Set("account", project.Username)
 	d.Set("project", project.Reponame)
+	d.Set("project_id", project.ID)
+	d.Set("organization_id", project.OrganizationID)
+	d.Set("slug", project.Slug)
 
 	envVars, err := client.ListEnvVars(vcstype, account, reponame)
 	if err != nil {
