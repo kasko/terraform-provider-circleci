@@ -36,7 +36,7 @@ func TestGetProject_found(t *testing.T) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
 		gotToken = r.Header.Get("Circle-Token")
-		w.Write([]byte(`{"slug":"gh/kasko/zurich-svc","name":"zurich-svc"}`))
+		w.Write([]byte(`{"id":"11111111-2222-4333-8444-555555555555","slug":"gh/kasko/zurich-svc","name":"zurich-svc","organization_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}`))
 	}))
 
 	p, err := c.GetProject("github", "kasko", "zurich-svc")
@@ -45,6 +45,9 @@ func TestGetProject_found(t *testing.T) {
 	}
 	if p.VcsType != "github" || p.Username != "kasko" || p.Reponame != "zurich-svc" {
 		t.Fatalf("unexpected project: %+v", p)
+	}
+	if p.ID != "11111111-2222-4333-8444-555555555555" || p.OrganizationID != "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" || p.Slug != "gh/kasko/zurich-svc" {
+		t.Fatalf("unexpected v2 attributes: %+v", p)
 	}
 	if gotPath != "/api/v2/project/gh/kasko/zurich-svc" {
 		t.Fatalf("unexpected path: %s", gotPath)

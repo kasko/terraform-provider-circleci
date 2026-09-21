@@ -135,7 +135,13 @@ func (c *ApiClient) ListProjects() ([]*Project, error) {
 func (c *ApiClient) GetProject(vcstype, account, reponame string) (*Project, error) {
 	slug := fmt.Sprintf("%s/%s/%s", vcsSlug(vcstype), account, reponame)
 
-	err := c.requestV2("GET", "project/"+slug, nil)
+	var resp struct {
+		ID             string `json:"id"`
+		Slug           string `json:"slug"`
+		OrganizationID string `json:"organization_id"`
+	}
+
+	err := c.requestV2("GET", "project/"+slug, &resp)
 	if err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.HTTPStatusCode == http.StatusNotFound {
@@ -144,7 +150,14 @@ func (c *ApiClient) GetProject(vcstype, account, reponame string) (*Project, err
 		return nil, err
 	}
 
-	return &Project{Username: account, Reponame: reponame, VcsType: vcstype}, nil
+	return &Project{
+		Username:       account,
+		Reponame:       reponame,
+		VcsType:        vcstype,
+		ID:             resp.ID,
+		Slug:           resp.Slug,
+		OrganizationID: resp.OrganizationID,
+	}, nil
 }
 
 func vcsSlug(vcstype string) string {
@@ -323,7 +336,10 @@ type EnvVar struct {
 }
 
 type Project struct {
-	Username string `json:"username"`
-	Reponame string `json:"reponame"`
-	VcsType  string `json:"vcs_type"`
+	Username       string `json:"username"`
+	Reponame       string `json:"reponame"`
+	VcsType        string `json:"vcs_type"`
+	ID             string `json:"id"`
+	Slug           string `json:"slug"`
+	OrganizationID string `json:"organization_id"`
 }
