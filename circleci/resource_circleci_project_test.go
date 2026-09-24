@@ -62,7 +62,7 @@ func TestResourceProjectUpdate_valueChangeDoesNotDeleteVariable(t *testing.T) {
 		mu.Lock()
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		mu.Unlock()
-		if r.Method == http.MethodGet && r.URL.Path == "/api/v1.1/project/github/kasko/zurich-svc/envvar" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1.1/project/github/kasko/acme-service/envvar" {
 			w.Write([]byte(`[]`))
 			return
 		}
@@ -70,10 +70,10 @@ func TestResourceProjectUpdate_valueChangeDoesNotDeleteVariable(t *testing.T) {
 	}))
 
 	attrs := map[string]string{
-		"id":         "github:kasko:zurich-svc",
+		"id":         "github:kasko:acme-service",
 		"vcs_type":   "github",
 		"account":    "kasko",
-		"project":    "zurich-svc",
+		"project":    "acme-service",
 		"variable.#": "3",
 	}
 	for name, value := range map[string]string{"ROTATED": "xxxx1111", "REMOVED": "xxxx3333", "KEPT": "xxxx4444"} {
@@ -86,7 +86,7 @@ func TestResourceProjectUpdate_valueChangeDoesNotDeleteVariable(t *testing.T) {
 	cfg := terraform.NewResourceConfigRaw(map[string]interface{}{
 		"vcs_type": "github",
 		"account":  "kasko",
-		"project":  "zurich-svc",
+		"project":  "acme-service",
 		"variable": []interface{}{
 			map[string]interface{}{"name": "ROTATED", "value": "new-secret-2222"},
 			map[string]interface{}{"name": "KEPT", "value": "old-secret-4444"},
@@ -110,16 +110,16 @@ func TestResourceProjectUpdate_valueChangeDoesNotDeleteVariable(t *testing.T) {
 		}
 		return false
 	}
-	if !has("POST /api/v1.1/project/github/kasko/zurich-svc/envvar") {
+	if !has("POST /api/v1.1/project/github/kasko/acme-service/envvar") {
 		t.Fatalf("expected ROTATED to be added, got %v", requests)
 	}
-	if has("DELETE /api/v1.1/project/github/kasko/zurich-svc/envvar/ROTATED") {
+	if has("DELETE /api/v1.1/project/github/kasko/acme-service/envvar/ROTATED") {
 		t.Fatalf("ROTATED must not be deleted after its value changed, got %v", requests)
 	}
-	if !has("DELETE /api/v1.1/project/github/kasko/zurich-svc/envvar/REMOVED") {
+	if !has("DELETE /api/v1.1/project/github/kasko/acme-service/envvar/REMOVED") {
 		t.Fatalf("expected REMOVED to be deleted, got %v", requests)
 	}
-	if has("DELETE /api/v1.1/project/github/kasko/zurich-svc/envvar/KEPT") {
+	if has("DELETE /api/v1.1/project/github/kasko/acme-service/envvar/KEPT") {
 		t.Fatalf("KEPT must not be touched, got %v", requests)
 	}
 }

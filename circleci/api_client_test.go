@@ -36,20 +36,20 @@ func TestGetProject_found(t *testing.T) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
 		gotToken = r.Header.Get("Circle-Token")
-		w.Write([]byte(`{"id":"11111111-2222-4333-8444-555555555555","slug":"gh/kasko/zurich-svc","name":"zurich-svc","organization_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}`))
+		w.Write([]byte(`{"id":"11111111-2222-4333-8444-555555555555","slug":"gh/kasko/acme-service","name":"acme-service","organization_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}`))
 	}))
 
-	p, err := c.GetProject("github", "kasko", "zurich-svc")
+	p, err := c.GetProject("github", "kasko", "acme-service")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p.VcsType != "github" || p.Username != "kasko" || p.Reponame != "zurich-svc" {
+	if p.VcsType != "github" || p.Username != "kasko" || p.Reponame != "acme-service" {
 		t.Fatalf("unexpected project: %+v", p)
 	}
-	if p.ID != "11111111-2222-4333-8444-555555555555" || p.OrganizationID != "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" || p.Slug != "gh/kasko/zurich-svc" {
+	if p.ID != "11111111-2222-4333-8444-555555555555" || p.OrganizationID != "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" || p.Slug != "gh/kasko/acme-service" {
 		t.Fatalf("unexpected v2 attributes: %+v", p)
 	}
-	if gotPath != "/api/v2/project/gh/kasko/zurich-svc" {
+	if gotPath != "/api/v2/project/gh/kasko/acme-service" {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
 	if gotToken != "secret" || gotQuery != "" {
@@ -79,7 +79,7 @@ func TestGetProject_retriesOn429(t *testing.T) {
 		w.Write([]byte(`{}`))
 	}))
 
-	if _, err := c.GetProject("github", "kasko", "zurich-svc"); err != nil {
+	if _, err := c.GetProject("github", "kasko", "acme-service"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if calls != 3 {
@@ -93,7 +93,7 @@ func TestGetProject_otherErrorIsNotNotFound(t *testing.T) {
 		w.Write([]byte(`{"message":"Permission denied"}`))
 	}))
 
-	_, err := c.GetProject("github", "kasko", "zurich-svc")
+	_, err := c.GetProject("github", "kasko", "acme-service")
 	if err == nil || errors.Is(err, ErrProjectNotFound) {
 		t.Fatalf("expected a non-not-found error, got %v", err)
 	}
