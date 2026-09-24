@@ -1,8 +1,11 @@
 package circleci
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
@@ -50,6 +53,75 @@ func TestAccCircleCIProject_basic(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestResourceProjectUpdate_valueChangeDoesNotDeleteVariable(t *testing.T) {
+	var mu sync.Mutex
+	var requests []string
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1.1/project/github/kasko/acme-service/envvar" {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write([]byte(`{}`))
+	}))
+
+	attrs := map[string]string{
+		"id":         "github:kasko:acme-service",
+		"vcs_type":   "github",
+		"account":    "kasko",
+		"project":    "acme-service",
+		"variable.#": "3",
+	}
+	for name, value := range map[string]string{"ROTATED": "xxxx1111", "REMOVED": "xxxx3333", "KEPT": "xxxx4444"} {
+		h := variableHash(map[string]interface{}{"name": name, "value": value})
+		attrs[fmt.Sprintf("variable.%d.name", h)] = name
+		attrs[fmt.Sprintf("variable.%d.value", h)] = value
+	}
+	state := &terraform.InstanceState{ID: attrs["id"], Attributes: attrs}
+
+	cfg := terraform.NewResourceConfigRaw(map[string]interface{}{
+		"vcs_type": "github",
+		"account":  "kasko",
+		"project":  "acme-service",
+		"variable": []interface{}{
+			map[string]interface{}{"name": "ROTATED", "value": "new-secret-2222"},
+			map[string]interface{}{"name": "KEPT", "value": "old-secret-4444"},
+		},
+	})
+
+	r := resourceProject()
+	diff, err := r.Diff(context.Background(), state, cfg, c)
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	if _, diags := r.Apply(context.Background(), state, diff, c); diags.HasError() {
+		t.Fatalf("apply: %v", diags)
+	}
+
+	has := func(req string) bool {
+		for _, got := range requests {
+			if got == req {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("POST /api/v1.1/project/github/kasko/acme-service/envvar") {
+		t.Fatalf("expected ROTATED to be added, got %v", requests)
+	}
+	if has("DELETE /api/v1.1/project/github/kasko/acme-service/envvar/ROTATED") {
+		t.Fatalf("ROTATED must not be deleted after its value changed, got %v", requests)
+	}
+	if !has("DELETE /api/v1.1/project/github/kasko/acme-service/envvar/REMOVED") {
+		t.Fatalf("expected REMOVED to be deleted, got %v", requests)
+	}
+	if has("DELETE /api/v1.1/project/github/kasko/acme-service/envvar/KEPT") {
+		t.Fatalf("KEPT must not be touched, got %v", requests)
+	}
 }
 
 func testCheckCircleCIProjectExists(n string, proj *Project) resource.TestCheckFunc {

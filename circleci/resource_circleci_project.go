@@ -160,8 +160,11 @@ func resourceProjectUpdate(d *schema.ResourceData, meta interface{}) error {
 		os := o.(*schema.Set)
 		ns := n.(*schema.Set)
 
+		added := make(map[string]bool)
+
 		for _, pRaw := range ns.Difference(os).List() {
 			data := pRaw.(map[string]interface{})
+			added[data["name"].(string)] = true
 
 			_, err := client.AddEnvVar(
 				vcstype,
@@ -178,6 +181,11 @@ func resourceProjectUpdate(d *schema.ResourceData, meta interface{}) error {
 
 		for _, pRaw := range os.Difference(ns).List() {
 			data := pRaw.(map[string]interface{})
+
+			// A value change is an add plus a delete of the same name; the add already overwrote it.
+			if added[data["name"].(string)] {
+				continue
+			}
 
 			err := client.DeleteEnvVar(
 				vcstype,
